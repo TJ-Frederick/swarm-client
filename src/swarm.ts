@@ -34,7 +34,7 @@ import { privateKeyToAccount } from 'https://esm.sh/viem/accounts';
 // ── Radius chain defaults ──
 
 const RADIUS_DEFAULTS = {
-  chainId: 723,
+  chainId: 723487,
   chainName: 'Radius',
   tokenAddress: '0x33ad9e4bd16b69b5bfded37d8b5d9ff9aba014fb',
   tokenName: 'Stable Coin',
@@ -260,7 +260,7 @@ export function createSwarm(userConfig) {
     return decodeUint(data.data);
   }
 
-  async function launch({ numAgents, requestsPerAgent, generateRequests, callbacks, walletClient, address }) {
+  async function launch({ numAgents, requestsPerAgent, generateRequests, callbacks, walletClient, address, accepted }) {
     if (running) throw new Error('Swarm is already running');
 
     const cb = callbacks || {};
@@ -354,7 +354,7 @@ export function createSwarm(userConfig) {
                 owner: account.address,
                 permitNonce: currentPermitNonce,
                 resource: req.resourceUrl ? { url: req.resourceUrl, description: req.description, mimeType: req.mimeType } : req,
-                accepted: null,
+                accepted: accepted,
                 config: cfg,
               });
 
@@ -363,11 +363,17 @@ export function createSwarm(userConfig) {
               const fetchMs = Date.now() - t0;
 
               if (!res.ok) {
+                const errBody = await res.text().catch(() => '');
+                cb.onAgentLog?.({
+                  agentIndex: agentIdx,
+                  requestId: req.description || req.url,
+                  message: 'HTTP ' + res.status + ' | nonce=' + currentPermitNonce + ' | attempt=' + attempt + ' | ' + errBody.slice(0, 300),
+                  isError: true,
+                });
                 if (attempt < cfg.maxRetries - 1) {
                   await new Promise(r => setTimeout(r, 300 * Math.pow(2, attempt)));
                   continue;
                 }
-                const errBody = await res.text().catch(() => '');
                 throw new Error('HTTP ' + res.status + (errBody ? ': ' + errBody : ''));
               }
 

@@ -686,7 +686,7 @@ let perRequestAmount = 100;
 let activeBlobUrl = null;
 
 const RADIUS_CHAIN = defineChain({
-  id: 723,
+  id: 723487,
   name: 'Radius',
   nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
   rpcUrls: { default: { http: ['https://rpc.radiustech.xyz/cebu04iqsbb2xhuklnlnj68amqfukg8ayl32tuwga9ldsuf2'] } },
@@ -1159,6 +1159,7 @@ async function launchSwarm() {
       },
       walletClient,
       address: connectedAddress,
+      accepted: requirement,
     });
 
   } catch (err) {
