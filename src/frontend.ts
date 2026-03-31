@@ -779,14 +779,14 @@ $btnWallet.addEventListener('click', async () => {
     try {
       await window.ethereum.request({
         method: 'wallet_switchEthereumChain',
-        params: [{ chainId: '0x2D3' }],
+        params: [{ chainId: '0xB0A1F' }],
       });
     } catch (switchErr) {
       if (switchErr.code === 4902) {
         await window.ethereum.request({
           method: 'wallet_addEthereumChain',
           params: [{
-            chainId: '0x2D3',
+            chainId: '0xB0A1F',
             chainName: 'Radius',
             nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
             rpcUrls: ['https://rpc.radiustech.xyz/cebu04iqsbb2xhuklnlnj68amqfukg8ayl32tuwga9ldsuf2'],
@@ -865,9 +865,23 @@ function addLogEntry(entry) {
 
   if (entry.isError) {
     msg = '<span class="log-msg">' + escHtml(entry.message || 'Request failed') + '</span>';
+    if (entry.probeMs != null) {
+      const parts = ['probe:' + entry.probeMs];
+      if (entry.signMs != null) parts.push('sign:' + entry.signMs);
+      if (entry.fetchMs != null) parts.push('fetch:' + entry.fetchMs);
+      latency = '<span class="log-latency">' + parts.join(' ') + '</span>';
+    }
   } else {
     msg = '<span class="log-msg">OK</span>';
-    if (entry.latencyMs != null) latency = '<span class="log-latency">' + entry.latencyMs + 'ms</span>';
+    if (entry.totalMs != null) {
+      latency = '<span class="log-latency">'
+        + 'probe:' + entry.probeMs + ' sign:' + entry.signMs
+        + ' fetch:' + entry.fetchMs + ' parse:' + entry.parseMs
+        + ' \\u2192 ' + entry.totalMs + 'ms'
+        + '</span>';
+    } else if (entry.latencyMs != null) {
+      latency = '<span class="log-latency">' + entry.latencyMs + 'ms</span>';
+    }
     if (entry.txHash) tx = '<span class="log-tx"><a href="' + EXPLORER_TX + entry.txHash + '" target="_blank" rel="noopener">' + entry.txHash.slice(0, 10) + '...</a></span>';
   }
 
@@ -1159,7 +1173,6 @@ async function launchSwarm() {
       },
       walletClient,
       address: connectedAddress,
-      accepted: requirement,
     });
 
   } catch (err) {

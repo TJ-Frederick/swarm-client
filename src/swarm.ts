@@ -80,6 +80,34 @@ function randomPermit2Nonce() {
   return BigInt('0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(''));
 }
 
+// ── Probe for fresh 402 payment requirements ──
+
+async function probeFor402(url) {
+  let probeRes;
+  try {
+    probeRes = await fetch(url);
+  } catch {
+    throw new Error('Could not reach endpoint for payment probe.');
+  }
+  if (probeRes.status !== 402) {
+    throw new Error('Probe returned ' + probeRes.status + ', expected 402.');
+  }
+  let probeBody;
+  try {
+    probeBody = await probeRes.json();
+  } catch {
+    throw new Error('Could not parse 402 probe response as JSON.');
+  }
+  const requirement = (probeBody.paymentRequirements && probeBody.paymentRequirements[0])
+    || (probeBody.accepts && probeBody.accepts[0]);
+  if (!requirement) throw new Error('Probe response missing payment requirements.');
+  if (!requirement.payTo) throw new Error('Probe requirement missing payTo address.');
+  if (!requirement.amount && requirement.maxAmountRequired) {
+    requirement.amount = requirement.maxAmountRequired;
+  }
+  return requirement;
+}
+
 // ── Helpers ──
 
 async function estimateGasWithFallback(publicClient, txParams, fallbackGas) {
@@ -179,7 +207,7 @@ export async function signX402Payment({ signTypedData, owner, permitNonce, resou
       spender: cfg.x402Permit2Proxy,
       nonce: p2Nonce,
       deadline: deadline,
-      witness: { to: cfg.paymentAddress, validAfter: BigInt(0) },
+      witness: { to: (accepted && accepted.payTo) || cfg.paymentAddress, validAfter: BigInt(0) },
     },
   });
 
@@ -212,7 +240,7 @@ export async function signX402Payment({ signTypedData, owner, permitNonce, resou
         spender: cfg.x402Permit2Proxy,
         nonce: p2Nonce.toString(),
         deadline: deadline.toString(),
-        witness: { to: cfg.paymentAddress, validAfter: '0' },
+        witness: { to: (accepted && accepted.payTo) || cfg.paymentAddress, validAfter: '0' },
       },
     },
     extensions: {
@@ -344,23 +372,32 @@ export function createSwarm(userConfig) {
           let success = false;
 
           for (let attempt = 0; attempt < cfg.maxRetries && !success && !abortFlag; attempt++) {
+            let probeMs = 0, signMs = 0, fetchMs = 0, parseMs = 0;
             try {
+              const cycleT0 = Date.now();
               if (attempt > 0) {
                 try { currentPermitNonce = await getNonce(account.address); } catch(e) {}
               }
 
+              // Probe for fresh payment requirements (fresh payTo) before each request
+              const probeT0 = Date.now();
+              const freshRequirement = await probeFor402(req.url);
+              probeMs = Date.now() - probeT0;
+
+              const signT0 = Date.now();
               const { xPayment } = await signX402Payment({
                 signTypedData: (params) => account.signTypedData(params),
                 owner: account.address,
                 permitNonce: currentPermitNonce,
                 resource: req.resourceUrl ? { url: req.resourceUrl, description: req.description, mimeType: req.mimeType } : req,
-                accepted: accepted,
+                accepted: freshRequirement,
                 config: cfg,
               });
+              signMs = Date.now() - signT0;
 
-              const t0 = Date.now();
+              const fetchT0 = Date.now();
               const res = await fetch(req.url, { headers: { 'X-Payment': xPayment } });
-              const fetchMs = Date.now() - t0;
+              fetchMs = Date.now() - fetchT0;
 
               if (!res.ok) {
                 const errBody = await res.text().catch(() => '');
@@ -369,6 +406,7 @@ export function createSwarm(userConfig) {
                   requestId: req.description || req.url,
                   message: 'HTTP ' + res.status + ' | nonce=' + currentPermitNonce + ' | attempt=' + attempt + ' | ' + errBody.slice(0, 300),
                   isError: true,
+                  probeMs, signMs, fetchMs,
                 });
                 if (attempt < cfg.maxRetries - 1) {
                   await new Promise(r => setTimeout(r, 300 * Math.pow(2, attempt)));
@@ -387,14 +425,18 @@ export function createSwarm(userConfig) {
                 } catch {}
               }
 
+              const parseT0 = Date.now();
               const responseText = await res.text();
               let data;
               try { data = JSON.parse(responseText); } catch { data = { content: responseText }; }
+              parseMs = Date.now() - parseT0;
+              const totalMs = Date.now() - cycleT0;
+
               currentPermitNonce = currentPermitNonce + BigInt(1);
               success = true;
 
               totalReqs++;
-              totalSpent += Number(amount);
+              totalSpent += Number(freshRequirement.amount || amount);
               const elapsed = (Date.now() - startTime) / 1000;
               cb.onStatsUpdate?.({
                 totalRequests: totalReqs,
@@ -409,6 +451,7 @@ export function createSwarm(userConfig) {
                 txHash: data.tx_hash || headerTxHash,
                 responseData: data,
                 latencyMs: fetchMs,
+                probeMs, signMs, fetchMs, parseMs, totalMs,
               });
             } catch (err) {
               if (attempt >= cfg.maxRetries - 1) {
@@ -417,6 +460,7 @@ export function createSwarm(userConfig) {
                   requestId: req.description || req.url,
                   message: err.message,
                   isError: true,
+                  probeMs, signMs, fetchMs,
                 });
                 try { currentPermitNonce = await getNonce(account.address); } catch(e) {}
               }

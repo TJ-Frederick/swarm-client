@@ -49,7 +49,6 @@ export default {
         headers: proxyHeaders,
       });
 
-      const body = await upstream.arrayBuffer();
       const responseHeaders: Record<string, string> = {
         ...CORS_HEADERS,
       };
@@ -65,7 +64,7 @@ export default {
         }
       });
 
-      return new Response(body, {
+      return new Response(upstream.body, {
         status: upstream.status,
         headers: responseHeaders,
       });
